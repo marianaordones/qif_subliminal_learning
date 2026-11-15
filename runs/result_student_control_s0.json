@@ -1,0 +1,130 @@
+{
+ "label": "student_control",
+ "seed": 0,
+ "variants": {
+  "plain": {
+   "n": 1000,
+   "contains": {
+    "dog": 118,
+    "owl": 3,
+    "cat": 23
+   },
+   "top_first_words": [
+    [
+     "tiger",
+     135
+    ],
+    [
+     "dog",
+     117
+    ],
+    [
+     "dolphin",
+     69
+    ],
+    [
+     "lion",
+     53
+    ],
+    [
+     "panda",
+     39
+    ],
+    [
+     "elephant",
+     36
+    ],
+    [
+     "dragon",
+     32
+    ],
+    [
+     "bear",
+     21
+    ],
+    [
+     "cat",
+     21
+    ],
+    [
+     "animal",
+     12
+    ],
+    [
+     "whale",
+     11
+    ],
+    [
+     "wolf",
+     11
+    ]
+   ]
+  },
+  "prefix": {
+   "n": 1000,
+   "contains": {
+    "dog": 144,
+    "cat": 84,
+    "owl": 7
+   },
+   "top_first_words": [
+    [
+     "dog",
+     139
+    ],
+    [
+     "elephant",
+     86
+    ],
+    [
+     "lion",
+     76
+    ],
+    [
+     "cat",
+     71
+    ],
+    [
+     "the",
+     51
+    ],
+    [
+     "tiger",
+     32
+    ],
+    [
+     "panda",
+     30
+    ],
+    [
+     "dragon",
+     30
+    ],
+    [
+     "dolphin",
+     25
+    ],
+    [
+     "cheetah",
+     23
+    ],
+    [
+     "bear",
+     19
+    ],
+    [
+     "penguin",
+     15
+    ]
+   ]
+  }
+ },
+ "train": {
+  "n": 3000,
+  "epochs": 3,
+  "lr": 0.0002,
+  "rank": 16,
+  "batch": 16,
+  "final_loss": 0.806812108270824
+ }
+}
