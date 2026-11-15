@@ -7,14 +7,8 @@ model_dir="${QIF_MODEL_DIR:-$PWD/models/Qwen2.5-7B-Instruct}"
 revision="${1:-main}"
 mkdir -p "$model_dir"
 
-qif_python="${QIF_PYTHON:-python3}"
-if ! "$qif_python" -c 'import huggingface_hub' >/dev/null 2>&1; then
-    local_prepare="$(mktemp -d "${CLUSTER_BUILD_TMP:-${SLURM_TMPDIR:-/tmp}}/qif-model.XXXXXXXX")"
-    trap 'rm -rf -- "$local_prepare"' EXIT
-    "$qif_python" -m venv --copies "$local_prepare/venv"
-    qif_python="$local_prepare/venv/bin/python"
-    "$qif_python" -m pip install huggingface_hub==0.36.0
-fi
+source "$script_dir/runtime.sh"
+qif_init_runtime download
 
 exec 9>"$model_dir/.qif-download.lock"
 flock -x 9

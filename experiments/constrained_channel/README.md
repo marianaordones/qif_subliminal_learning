@@ -62,23 +62,34 @@ As opções mais comuns são `--numbers 1` para o teste de 900 saídas,
 `--identical-teachers` para o controle. Cada tarefa usa `cuda:0` dentro
 da sua própria alocação.
 
-Se já houver um ambiente no cluster, exporte seu Python ou o script
-de inicialização antes de submeter. Por exemplo:
+Cada launcher seleciona o interpretador onde está rodando. O padrão
+procura `python3.12` e depois `python3.11`. Para escolher explicitamente
+um interpretador disponível no nó em que o comando vai executar, use
+`CLUSTER_PYTHON`. Por exemplo, no nó de login:
 
 ```bash
-export QIF_PYTHON=/caminho/do/ambiente/bin/python
-# Ou use o script de runtime que já funciona no cluster.
-# export QIF_RUNTIME_SCRIPT=/caminho/do/runtime.sh
-bash experiments/constrained_channel/submit.sh --numbers 2 --samples 5000
+CLUSTER_PYTHON="$(command -v python3.12)" bash experiments/constrained_channel/prepare_model.sh
 ```
 
-O runtime é inicializado dentro do job. Sem essas variáveis, cada tarefa
-cria o próprio ambiente temporário com PyTorch 2.5.1 CUDA 12.4 e
-Transformers 4.57.1. O diretório é criado em `CLUSTER_BUILD_TMP`, se
-configurado, ou em `SLURM_TMPDIR` ou `/tmp`. O fallback exige espaço local
-e acesso aos índices de pacotes. Use `QIF_BOOTSTRAP_PYTHON` para selecionar
-o Python que cria o ambiente. Em nós sem acesso à internet, use um runtime
-já preparado e o snapshot local do modelo.
+Para definir `CLUSTER_PYTHON` na submissão, o caminho precisa existir no
+nó de computação. O launcher GPU também pode carregar
+`QIF_RUNTIME_SCRIPT` dentro da alocação para disponibilizar o interpretador.
+
+Os launchers usam `pip --target` e configuram `PYTHONPATH` de novo a cada
+execução. A preparação do modelo usa o perfil leve `download`. Os jobs
+GPU usam `cu124`, com PyTorch 2.5.1 CUDA 12.4 e Transformers 4.57.1.
+Se o Python escolhido não tiver pip, o launcher instala o pip 25.0.1 em
+disco local com `get-pip.py`. Essa etapa usa `CLUSTER_BUILD_TMP`,
+`SLURM_TMPDIR` ou `/tmp`.
+
+As bibliotecas ficam em `~/pylibs` por padrão. Use `QIF_LIBS_ROOT` para
+escolher outro diretório persistente. Cada cache é identificado pelo perfil,
+ABI do Python, arquitetura, glibc e hash dos requisitos. A instalação usa
+uma pasta intermediária e um lock. O cache fica disponível após o teste
+de importação e a gravação de `.complete`. Jobs com o mesmo perfil e ABI
+reutilizam o cache. A primeira instalação exige acesso aos índices de
+pacotes e espaço no cache persistente e no disco temporário local. Com
+cache completo e snapshot local, os jobs GPU podem rodar sem internet.
 
 Em uma alocação existente, use o mesmo launcher:
 

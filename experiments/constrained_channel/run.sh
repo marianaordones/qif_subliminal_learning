@@ -23,31 +23,16 @@ local_run="$(mktemp -d "$scratch_base/qif-channel.XXXXXXXX")"
 trap 'rm -rf -- "$local_run"' EXIT
 export TMPDIR="$local_run"
 
-# Initialize inside the allocation. The runtime script can set PATH or
-# QIF_PYTHON. An explicit Python takes precedence over the fallback venv.
+# Optional site initialization can make a Python interpreter available.
 if [[ -n ${QIF_RUNTIME_SCRIPT:-} ]]; then
     source "$QIF_RUNTIME_SCRIPT"
-    if [[ -z ${QIF_PYTHON:-} ]]; then
-        QIF_PYTHON="$(command -v python || command -v python3)"
-    fi
 fi
 
-if [[ -n ${QIF_PYTHON:-} ]]; then
-    qif_python="$QIF_PYTHON"
-else
-    venv_dir="$local_run/venv"
-    printf 'Creating runtime on node-local disk: %s\n' "$venv_dir"
-    df -h "$scratch_base"
-    "${QIF_BOOTSTRAP_PYTHON:-python3}" -m venv --copies "$venv_dir"
-    qif_python="$venv_dir/bin/python"
-    "$qif_python" -m pip install --no-cache-dir torch==2.5.1 \
-        --index-url https://download.pytorch.org/whl/cu124
-    "$qif_python" -m pip install --no-cache-dir transformers==4.57.1
-fi
+source "$script_dir/runtime.sh"
+qif_init_runtime cu124
 
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
-printf 'Python executable: %s\n' "$qif_python"
 
 "$qif_python" - "$@" <<'PY'
 import platform

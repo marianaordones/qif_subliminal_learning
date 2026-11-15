@@ -6,6 +6,8 @@ cd "$script_dir/../.."
 test -f bayes_leakage.py
 test -f experiments/constrained_channel/__main__.py
 test -f experiments/constrained_channel/run.sh
+test -f experiments/constrained_channel/runtime.sh
+test -f experiments/constrained_channel/requirements-cu124.txt
 command -v sbatch >/dev/null
 mkdir -p logs runs/constrained_channel
 printf 'Submitting from %s\n' "$PWD" >&2
