@@ -223,7 +223,7 @@ def main():
     model_options = {"local_files_only": True} if local_model else {"revision": revision}
     tokenizer = AutoTokenizer.from_pretrained(source, **model_options)
     model = AutoModelForCausalLM.from_pretrained(
-        source, torch_dtype=getattr(torch, args.dtype), **model_options,
+        source, dtype=getattr(torch, args.dtype), **model_options,
     ).to(args.device).eval()
     teachers = {
         name: ConstrainedTeacher(
@@ -233,7 +233,7 @@ def main():
         for name, prompt in SYSTEM_PROMPTS.items()
     }
     prior = Prior.uniform(list(teachers))
-    log_prior = torch.tensor(prior.log_probs(), dtype=torch.float64)
+    log_prior = torch.tensor(prior.log_probs, dtype=torch.float64)
     report = {
         "model": MODEL,
         "model_source": source,
