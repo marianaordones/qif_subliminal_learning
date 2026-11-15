@@ -4,7 +4,9 @@ import argparse
 from copy import deepcopy
 import json
 import math
+import os
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from time import perf_counter
 
 import torch
@@ -169,6 +171,7 @@ def parse_args():
     parser.add_argument("--dtype", choices=("bfloat16", "float32"), default="bfloat16")
     parser.add_argument("--revision", default="main", help="Model and tokenizer revision.")
     parser.add_argument("--output", type=Path, help="Write the JSON report to a new file.")
+    parser.add_argument("--checkpoint-dir", type=Path, help="Reuse completed exact teacher rows.")
     parser.add_argument("--identical-teachers", action="store_true",
                         help="Use the coruja prompt for all three labels. Expected V1 = 1/3.")
     args = parser.parse_args()
@@ -176,15 +179,51 @@ def parse_args():
         parser.error("--samples must be at least 2 and --batch-size at least 1.")
     if args.output and (not args.output.parent.is_dir() or args.output.exists()):
         parser.error("--output must name a new file in an existing directory.")
+    if args.checkpoint_dir and not args.checkpoint_dir.is_dir():
+        parser.error("--checkpoint-dir must already exist.")
     return args
+
+
+def exact_teacher_row(teacher, name, checkpoint_dir, configuration):
+    if checkpoint_dir is None:
+        return exact_row(teacher, show_progress=True)
+    checkpoint = checkpoint_dir / f"{name}.pt"
+    if checkpoint.exists():
+        saved = torch.load(checkpoint, map_location="cpu", weights_only=True)
+        if saved["configuration"] != configuration:
+            raise ValueError(f"Checkpoint configuration differs: {checkpoint}")
+        print(f"Resuming completed teacher: {name}", flush=True)
+        return saved["row"]
+    row = exact_row(teacher, show_progress=True)
+    with NamedTemporaryFile(dir=checkpoint_dir, delete=False) as stream:
+        temporary = Path(stream.name)
+        try:
+            torch.save({"configuration": configuration, "row": row}, stream)
+            stream.close()
+            temporary.replace(checkpoint)
+        finally:
+            temporary.unlink(missing_ok=True)
+    return row
 
 
 @torch.inference_mode()
 def main():
     args = parse_args()
-    tokenizer = AutoTokenizer.from_pretrained(MODEL, revision=args.revision)
+    local_model = os.environ.get("QIF_MODEL_DIR")
+    source = str(Path(local_model).resolve()) if local_model else MODEL
+    revision = args.revision
+    if local_model:
+        marker = Path(source) / ".qif-revision"
+        if marker.is_file():
+            revision = marker.read_text(encoding="utf-8").strip()
+            if args.revision not in ("main", revision):
+                raise ValueError(f"Local snapshot has revision {revision}, requested {args.revision}.")
+        elif args.revision != "main":
+            raise ValueError("A local snapshot needs a .qif-revision marker to verify --revision.")
+    model_options = {"local_files_only": True} if local_model else {"revision": revision}
+    tokenizer = AutoTokenizer.from_pretrained(source, **model_options)
     model = AutoModelForCausalLM.from_pretrained(
-        MODEL, revision=args.revision, torch_dtype=getattr(torch, args.dtype),
+        source, torch_dtype=getattr(torch, args.dtype), **model_options,
     ).to(args.device).eval()
     teachers = {
         name: ConstrainedTeacher(
@@ -197,7 +236,8 @@ def main():
     log_prior = torch.tensor(prior.log_probs(), dtype=torch.float64)
     report = {
         "model": MODEL,
-        "revision": args.revision,
+        "model_source": source,
+        "revision": revision,
         "secrets": prior.secrets,
         "v_prior": prior.v_prior(),
         "numbers_observed": args.numbers,
@@ -209,9 +249,16 @@ def main():
     if args.method in ("both", "exact"):
         start = perf_counter()
         rows = []
+        configuration = {
+            **report,
+            "user_prompt": USER_PROMPT,
+            "system_prompts": SYSTEM_PROMPTS,
+            "torch": str(torch.__version__),
+        }
+        configuration.pop("seed")
         for name, teacher in teachers.items():
             print(f"Exact: {name}", flush=True)
-            rows.append(exact_row(teacher, show_progress=True))
+            rows.append(exact_teacher_row(teacher, name, args.checkpoint_dir, configuration))
         report["exact"] = exact_result(torch.stack(rows), log_prior)
         report["exact"]["seconds"] = perf_counter() - start
     if args.method in ("both", "mc"):

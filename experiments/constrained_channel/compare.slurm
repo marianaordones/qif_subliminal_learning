@@ -2,7 +2,9 @@
 #SBATCH --job-name=qif-channel
 #SBATCH --partition=high_performance
 #SBATCH --qos=high
-#SBATCH --gres=gpu:1
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --gres=gpu:L40S:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=48G
 #SBATCH --time=08:00:00
@@ -22,8 +24,8 @@ esac
 
 for arg in "$@"; do
     case "$arg" in
-        --method|--method=*|--output|--output=*)
-            echo "The Slurm job sets --method and --output." >&2
+        --method|--method=*|--output|--output=*|--checkpoint-dir|--checkpoint-dir=*)
+            echo "The Slurm job configures the method and output paths." >&2
             exit 2
             ;;
     esac
@@ -32,7 +34,16 @@ done
 result_dir=runs/constrained_channel
 mkdir -p "$result_dir"
 run_id="${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}_r${SLURM_RESTART_COUNT:-0}"
+output="$result_dir/${run_id}_${method}.json"
+printf 'job=%s task=%s node=%s cwd=%s output=%s\n' \
+    "$SLURM_ARRAY_JOB_ID" "$SLURM_ARRAY_TASK_ID" "$(hostname)" "$PWD" "$output"
+checkpoint_args=()
+if [[ "$method" == exact ]]; then
+    checkpoint_dir="${QIF_CHECKPOINT_DIR:-$result_dir/checkpoints/$SLURM_ARRAY_JOB_ID}"
+    mkdir -p "$checkpoint_dir"
+    checkpoint_args=(--checkpoint-dir "$checkpoint_dir")
+fi
 exec bash experiments/constrained_channel/run.sh \
     --method "$method" \
-    --output "$result_dir/${run_id}_${method}.json" \
+    --output "$output" "${checkpoint_args[@]}" \
     "$@"

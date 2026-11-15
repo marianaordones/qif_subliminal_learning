@@ -9,4 +9,4 @@ test -f experiments/constrained_channel/run.sh
 command -v sbatch >/dev/null
 mkdir -p logs runs/constrained_channel
 printf 'Submitting from %s\n' "$PWD" >&2
-exec sbatch --parsable experiments/constrained_channel/compare.slurm "$@"
+exec sbatch --parsable --array="${QIF_ARRAY:-0-1%2}" experiments/constrained_channel/compare.slurm "$@"

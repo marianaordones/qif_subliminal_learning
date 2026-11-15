@@ -4,6 +4,25 @@ set -Eeuo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 cd "$script_dir/../.."
 
+printf 'Node: %s\nWorking directory: %s\nCUDA_VISIBLE_DEVICES: %s\n' \
+    "$(hostname)" "$PWD" "${CUDA_VISIBLE_DEVICES:-unset}"
+nvidia-smi
+printf 'Experiment arguments:'
+printf ' %q' "$@"
+printf '\n'
+
+export QIF_MODEL_DIR="${QIF_MODEL_DIR:-$PWD/models/Qwen2.5-7B-Instruct}"
+if [[ ! -f "$QIF_MODEL_DIR/config.json" || ! -f "$QIF_MODEL_DIR/tokenizer.json" ]]; then
+    echo "Set QIF_MODEL_DIR to a complete local snapshot or run prepare_model.sh first." >&2
+    exit 2
+fi
+printf 'Model directory: %s\n' "$QIF_MODEL_DIR"
+
+scratch_base="${CLUSTER_BUILD_TMP:-${SLURM_TMPDIR:-/tmp}}"
+local_run="$(mktemp -d "$scratch_base/qif-channel.XXXXXXXX")"
+trap 'rm -rf -- "$local_run"' EXIT
+export TMPDIR="$local_run"
+
 # Initialize inside the allocation. The runtime script can set PATH or
 # QIF_PYTHON. An explicit Python takes precedence over the fallback venv.
 if [[ -n ${QIF_RUNTIME_SCRIPT:-} ]]; then
@@ -16,28 +35,19 @@ fi
 if [[ -n ${QIF_PYTHON:-} ]]; then
     qif_python="$QIF_PYTHON"
 else
-    venv_dir="${QIF_VENV_DIR:-$PWD/.venv/qif-cu124}"
-    mkdir -p "$venv_dir"
-    (
-        flock -x 9
-        if [[ ! -f "$venv_dir/.qif-cu124-ready" ]]; then
-            "${QIF_BOOTSTRAP_PYTHON:-python3}" -m venv "$venv_dir"
-            "$venv_dir/bin/python" -m pip install torch==2.5.1 \
-                --index-url https://download.pytorch.org/whl/cu124
-            "$venv_dir/bin/python" -m pip install transformers==4.57.1
-            touch "$venv_dir/.qif-cu124-ready"
-        fi
-    ) 9>"$venv_dir/.install.lock"
+    venv_dir="$local_run/venv"
+    printf 'Creating runtime on node-local disk: %s\n' "$venv_dir"
+    df -h "$scratch_base"
+    "${QIF_BOOTSTRAP_PYTHON:-python3}" -m venv --copies "$venv_dir"
     qif_python="$venv_dir/bin/python"
+    "$qif_python" -m pip install --no-cache-dir torch==2.5.1 \
+        --index-url https://download.pytorch.org/whl/cu124
+    "$qif_python" -m pip install --no-cache-dir transformers==4.57.1
 fi
 
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
-printf 'Node: %s\nWorking directory: %s\nCUDA_VISIBLE_DEVICES: %s\n' \
-    "$(hostname)" "$PWD" "${CUDA_VISIBLE_DEVICES:-unset}"
-printf 'Experiment arguments:'
-printf ' %q' "$@"
-printf '\n'
+printf 'Python executable: %s\n' "$qif_python"
 
 "$qif_python" - "$@" <<'PY'
 import platform
@@ -66,4 +76,4 @@ with torch.cuda.device(device):
 print("CUDA smoke test passed.")
 PY
 
-exec "$qif_python" -m experiments.constrained_channel "$@"
+"$qif_python" -m experiments.constrained_channel "$@"

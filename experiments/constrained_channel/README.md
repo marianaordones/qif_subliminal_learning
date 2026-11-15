@@ -2,7 +2,25 @@
 
 ## Slurm
 
-No nó de login, na raiz do repositório:
+No nó de login, na raiz do repositório, prepare os pesos uma vez
+em uma pasta persistente de arquivos comuns:
+
+```bash
+bash experiments/constrained_channel/prepare_model.sh
+```
+
+O padrão é `models/Qwen2.5-7B-Instruct`. Se já tiver um snapshot local
+completo de arquivos comuns, exporte `QIF_MODEL_DIR=/caminho/do/modelo`
+e use esse snapshot. O script de preparação usa `snapshot_download` com
+`local_dir` e grava o hash da revisão em `.qif-revision`.
+
+Para um primeiro teste na L40S com listas do tamanho final:
+
+```bash
+QIF_ARRAY=1 bash experiments/constrained_channel/submit.sh --numbers 2 --samples 128
+```
+
+Para submeter os dois métodos:
 
 ```bash
 pwd
@@ -15,7 +33,7 @@ sacct -j "$JOB_ID" --format=JobID,State,Elapsed,ExitCode,NodeList
 
 O array tem duas tarefas elegíveis para execução simultânea.
 A tarefa `0` executa o canal exato e a tarefa `1` executa Monte Carlo.
-Cada tarefa solicita uma GPU da `high_performance`, QoS `high`, 8 CPUs,
+Cada tarefa solicita uma L40S da `high_performance`, QoS `high`, 8 CPUs,
 48 GB de RAM e até 8 h. O Slurm decide quando iniciar cada tarefa.
 
 | Artefato | Caminho |
@@ -26,6 +44,17 @@ Cada tarefa solicita uma GPU da `high_performance`, QoS `high`, 8 CPUs,
 
 `r0` é a primeira tentativa. Em reexecuções automáticas, o contador
 incrementa e o novo JSON ganha outro nome.
+
+A enumeração salva um checkpoint por teacher terminado em
+`runs/constrained_channel/checkpoints/<JOB_ID>/`. Para reenviar só o exato
+com os mesmos parâmetros, depois que o job anterior terminar:
+
+```bash
+QIF_ARRAY=0 QIF_CHECKPOINT_DIR="runs/constrained_channel/checkpoints/$JOB_ID" \
+    bash experiments/constrained_channel/submit.sh --numbers 2 --samples 5000
+```
+
+Um teacher que estava em andamento recomeça sua própria linha.
 
 As opções mais comuns são `--numbers 1` para o teste de 900 saídas,
 `--samples N` (padrão 5000), `--seed N`, `--batch-size N` (padrão 128),
@@ -43,13 +72,13 @@ export QIF_PYTHON=/caminho/do/ambiente/bin/python
 bash experiments/constrained_channel/submit.sh --numbers 2 --samples 5000
 ```
 
-O runtime é inicializado dentro do job. Sem essas variáveis, a primeira
-tarefa que obtiver o lock de instalação prepara `.venv/qif-cu124` com
-PyTorch 2.5.1 CUDA 12.4 e Transformers 4.57.1. A outra reutiliza o mesmo
-ambiente. O fallback usa `python3`, `venv`, `flock` e acesso aos
-índices de pacotes. `QIF_BOOTSTRAP_PYTHON` e `QIF_VENV_DIR` permitem
-trocar o Python e o local do ambiente. Em nós sem acesso à internet,
-use um ambiente já preparado e o checkpoint no cache do Hugging Face.
+O runtime é inicializado dentro do job. Sem essas variáveis, cada tarefa
+cria o próprio ambiente temporário com PyTorch 2.5.1 CUDA 12.4 e
+Transformers 4.57.1. O diretório é criado em `CLUSTER_BUILD_TMP`, se
+configurado, ou em `SLURM_TMPDIR` ou `/tmp`. O fallback exige espaço local
+e acesso aos índices de pacotes. Use `QIF_BOOTSTRAP_PYTHON` para selecionar
+o Python que cria o ambiente. Em nós sem acesso à internet, use um runtime
+já preparado e o snapshot local do modelo.
 
 Em uma alocação existente, use o mesmo launcher:
 
