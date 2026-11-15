@@ -34,9 +34,10 @@ qif_init_runtime cu124
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 
-"$qif_python" - "$@" <<'PY'
+"$qif_python" -S - "$@" <<'PY'
 import platform
 
+import numpy
 import torch
 import transformers
 from transformers import DynamicCache
@@ -45,7 +46,8 @@ from experiments.constrained_channel.__main__ import parse_args
 
 args = parse_args()
 print(f"Python {platform.python_version()}, PyTorch {torch.__version__}, "
-      f"Transformers {transformers.__version__}, CUDA build {torch.version.cuda}")
+      f"Transformers {transformers.__version__}, NumPy {numpy.__version__}, "
+      f"CUDA build {torch.version.cuda}")
 if not hasattr(DynamicCache, "batch_repeat_interleave"):
     raise SystemExit("This Transformers runtime lacks DynamicCache.batch_repeat_interleave.")
 device = torch.device(args.device)
@@ -61,4 +63,4 @@ with torch.cuda.device(device):
 print("CUDA smoke test passed.")
 PY
 
-"$qif_python" -m experiments.constrained_channel "$@"
+"$qif_python" -S -m experiments.constrained_channel "$@"

@@ -6,7 +6,16 @@ qif_init_runtime() {
     requirements="$script_dir/requirements-$profile.txt"
     case "$profile" in
         download) probe='from huggingface_hub import HfApi, snapshot_download' ;;
-        cu124) probe='import torch; from transformers import DynamicCache, AutoModelForCausalLM; assert torch.version.cuda == "12.4" and hasattr(DynamicCache, "batch_repeat_interleave")' ;;
+        cu124) probe='
+import numpy as np
+import torch
+from transformers import DynamicCache
+from transformers.models.qwen2.modeling_qwen2 import Qwen2ForCausalLM
+
+assert torch.version.cuda == "12.4"
+assert hasattr(DynamicCache, "batch_repeat_interleave")
+assert torch.from_numpy(np.zeros(1)).numel() == 1
+' ;;
         *) printf 'Unknown runtime profile: %s\n' "$profile" >&2; return 2 ;;
     esac
 
@@ -20,8 +29,8 @@ qif_init_runtime() {
         echo "Set CLUSTER_PYTHON to an available Python 3.11 or 3.12 executable." >&2
         return 2
     fi
-    qif_python="$("$requested" -c 'import os, sys; print(os.path.abspath(sys.executable))')"
-    abi="$("$qif_python" -c '
+    qif_python="$("$requested" -S -c 'import os, sys; print(os.path.abspath(sys.executable))')"
+    abi="$("$qif_python" -S -c '
 import platform
 import sys
 import sysconfig
@@ -75,12 +84,12 @@ print(sysconfig.get_config_var("SOABI"))
 
         PYTHONPATH="$pip_path" "$qif_python" -m pip install --no-cache-dir \
             --ignore-installed --target "$stage" -r "$requirements"
-        PYTHONPATH="$stage" "$qif_python" -c "$probe"
+        PYTHONPATH="$stage" "$qif_python" -S -c "$probe"
         touch "$stage/.complete"
         mv -T -- "$stage" "$qif_libs"
         stage=""
     ) 9>"$qif_libs.lock"
 
     export PYTHONPATH="$PWD:$qif_libs"
-    "$qif_python" -c "$probe"
+    "$qif_python" -S -c "$probe"
 }

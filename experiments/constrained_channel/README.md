@@ -76,8 +76,11 @@ nó de computação. O launcher GPU também pode carregar
 `QIF_RUNTIME_SCRIPT` dentro da alocação para disponibilizar o interpretador.
 
 Os launchers usam `pip --target` e configuram `PYTHONPATH` de novo a cada
-execução. A preparação do modelo usa o perfil leve `download`. Os jobs
-GPU usam `cu124`, com PyTorch 2.5.1 CUDA 12.4 e Transformers 4.57.1.
+execução. Os testes de importação e os programas rodam com `python -S`
+para excluir os pacotes globais do interpretador, inclusive os da
+instalação Anaconda. A preparação do modelo usa o perfil `download`.
+Os jobs GPU usam `cu124`, com PyTorch 2.5.1 CUDA 12.4,
+Transformers 4.57.1 e NumPy 1.26.4.
 Se o Python escolhido não tiver pip, o launcher instala o pip 25.0.1 em
 disco local com `get-pip.py`. Essa etapa usa `CLUSTER_BUILD_TMP`,
 `SLURM_TMPDIR` ou `/tmp`.

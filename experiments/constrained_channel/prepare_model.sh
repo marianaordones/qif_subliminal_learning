@@ -12,7 +12,7 @@ qif_init_runtime download
 
 exec 9>"$model_dir/.qif-download.lock"
 flock -x 9
-"$qif_python" - "$model_dir" "$revision" <<'PY'
+"$qif_python" -S - "$model_dir" "$revision" <<'PY'
 from pathlib import Path
 import sys
 
