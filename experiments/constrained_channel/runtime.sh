@@ -6,6 +6,7 @@ qif_init_runtime() {
     requirements="$script_dir/requirements-$profile.txt"
     case "$profile" in
         download) probe='from huggingface_hub import HfApi, snapshot_download' ;;
+        plot) probe='import matplotlib; matplotlib.use("Agg"); from matplotlib import pyplot' ;;
         cu124) probe='
 import numpy as np
 import torch

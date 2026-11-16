@@ -4,6 +4,15 @@ set -Eeuo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 cd "$script_dir/../.."
 
+experiment_module=experiments.constrained_channel
+if [[ ${1:-} == --free-generation ]]; then
+    experiment_module=experiments.constrained_channel.free_generation
+    shift
+elif [[ ${1:-} == --ablation ]]; then
+    experiment_module=experiments.constrained_channel.ablation
+    shift
+fi
+
 printf 'Node: %s\nWorking directory: %s\nCUDA_VISIBLE_DEVICES: %s\n' \
     "$(hostname)" "$PWD" "${CUDA_VISIBLE_DEVICES:-unset}"
 nvidia-smi
@@ -34,17 +43,20 @@ qif_init_runtime cu124
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 
-"$qif_python" -S - "$@" <<'PY'
+"$qif_python" -S - "$experiment_module" "$@" <<'PY'
+from importlib import import_module
 import platform
+import sys
 
 import numpy
 import torch
 import transformers
 from transformers import DynamicCache
 
-from experiments.constrained_channel.__main__ import parse_args
-
-args = parse_args()
+module = sys.argv.pop(1)
+if module == "experiments.constrained_channel":
+    module += ".__main__"
+args = import_module(module).parse_args()
 print(f"Python {platform.python_version()}, PyTorch {torch.__version__}, "
       f"Transformers {transformers.__version__}, NumPy {numpy.__version__}, "
       f"CUDA build {torch.version.cuda}")
@@ -63,4 +75,4 @@ with torch.cuda.device(device):
 print("CUDA smoke test passed.")
 PY
 
-"$qif_python" -S -m experiments.constrained_channel "$@"
+"$qif_python" -S -m "$experiment_module" "$@"

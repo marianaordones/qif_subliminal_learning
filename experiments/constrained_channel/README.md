@@ -1,5 +1,55 @@
 # Canal restrito com Qwen2.5-7B-Instruct
 
+## Ablation de custo da enumeração
+
+Na raiz do repositório, com o mesmo snapshot usado no experimento de dois números:
+
+```bash
+mkdir -p logs
+sbatch experiments/constrained_channel/ablation.slurm
+```
+
+O job usa uma L40S, BF16, lotes de 128 e a revisão
+`a09a35458c702b33eeacc393d103063234e8bc28`. O prompt continua pedindo
+exatamente dois números. Depois destes, a decodificação restrita força
+mais um separador e permite um ou dois dígitos do terceiro número.
+Os resultados medem essa extensão forçada do mesmo contexto.
+
+A enumeração recalcula a base de dois números, reaproveita a base para
+os dois casos maiores e soma os resultados em blocos. Os tempos das
+extensões são cumulativos e incluem a base recalculada, sem carregar
+o modelo ou gerar o gráfico. O primeiro ponto do gráfico usa a medição
+histórica de 195,26 s. As projeções usam o custo por prefixo observado
+ao prever o segundo dígito do terceiro número. Esse custo é mantido
+constante nas extrapolações. Por padrão vão até cinco números completos.
+
+`--baseline-seconds`, `--max-numbers` e `--block-size` podem ser
+passados depois de `ablation.slurm`. O JSON e os gráficos PNG e SVG
+ficam em `runs/channel_ablation/<JOB_ID>/timing.{json,png,svg}`.
+Os logs ficam em `logs/qif-ablation-<JOB_ID>.out` e `.err`.
+Para retomar um job interrompido, aponte para o mesmo diretório com
+`QIF_ABLATION_DIR=runs/channel_ablation/<JOB_ID>` na nova submissão.
+A base de dois números é recalculada e os blocos concluídos são reutilizados.
+
+## Monte Carlo com geração livre a 7B
+
+Com o snapshot local já preparado, submeta da raiz do repositório:
+
+```bash
+mkdir -p logs
+sbatch experiments/constrained_channel/free_generation.slurm
+```
+
+O job usa uma L40S e o runtime compartilhado do projeto. O prompt pede
+dez números de três dígitos depois de `182, 818, 725,`. As respostas
+são amostradas sem máscara ou filtro, até o EOS ou até 40 tokens novos.
+O caso principal usa 120 rodadas para uma lista e 120 para três listas,
+com semente 1 em cada caso. Na rodada com três listas, o mesmo teacher
+é mantido durante todas as gerações. O controle com teachers idênticos
+usa 20 rodadas e semente 0. A inferência usa FP32 como no script original.
+O JSON fica em `runs/free_generation/<JOB_ID>_r0.json` e os logs em
+`logs/qif-free-generation-<JOB_ID>.out` e `.err`.
+
 ## Slurm
 
 No nó de login, na raiz do repositório, prepare os pesos uma vez

@@ -30,7 +30,7 @@ USER_PROMPT = (
 
 
 class ConstrainedTeacher:
-    def __init__(self, model, tokenizer, system_prompt, device, numbers, batch_size):
+    def __init__(self, model, tokenizer, system_prompt, device, numbers, batch_size, extra_digits=0):
         self.model = model
         self.device = device
         self.batch_size = batch_size
@@ -44,7 +44,7 @@ class ConstrainedTeacher:
         self.separator = tokenizer.encode(", ", add_special_tokens=False)
         if tokenizer.decode(self.separator) != ", ":
             raise ValueError("Tokenizer must preserve the comma and space.")
-        self.radices = (9, 10, 10) * numbers
+        self.radices = (9, 10, 10) * numbers + (9, 10, 10)[:extra_digits]
         for example in ("100, 999", "182, 705"):
             first, second = example.split(", ")
             ids = [digits[int(digit)] for digit in first]
@@ -81,6 +81,9 @@ class ConstrainedTeacher:
         if depth >= 3:
             separator = ids.new_tensor(self.separator).expand(ids.shape[0], -1)
             ids = torch.cat((ids[:, :3], separator, ids[:, 3:]), dim=1)
+        if depth >= 6:
+            ids = torch.cat((ids[:, :6 + len(self.separator)], separator,
+                             ids[:, 6 + len(self.separator):]), dim=1)
         return ids
 
     def transitions(self, prefixes, depth):
@@ -99,9 +102,9 @@ class ConstrainedTeacher:
             yield F.log_softmax(logits[:, -allowed:], dim=1).to(device="cpu", dtype=torch.float64)
 
 
-def exact_row(teacher, show_progress=False):
+def exact_row(teacher, show_progress=False, digits=None):
     log_mass = torch.zeros(1, dtype=torch.float64)
-    for depth, radix in enumerate(teacher.radices):
+    for depth, radix in enumerate(teacher.radices[:digits]):
         prefixes = torch.arange(log_mass.numel())
         log_prob = torch.cat(list(teacher.transitions(prefixes, depth)))
         log_mass = (log_mass[:, None] + log_prob).reshape(-1)
@@ -206,9 +209,7 @@ def exact_teacher_row(teacher, name, checkpoint_dir, configuration):
     return row
 
 
-@torch.inference_mode()
-def main():
-    args = parse_args()
+def load_model(args):
     local_model = os.environ.get("QIF_MODEL_DIR")
     source = str(Path(local_model).resolve()) if local_model else MODEL
     revision = args.revision
@@ -225,6 +226,13 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(
         source, dtype=getattr(torch, args.dtype), **model_options,
     ).to(args.device).eval()
+    return model, tokenizer, source, revision
+
+
+@torch.inference_mode()
+def main():
+    args = parse_args()
+    model, tokenizer, source, revision = load_model(args)
     teachers = {
         name: ConstrainedTeacher(
             model, tokenizer, SYSTEM_PROMPTS["coruja"] if args.identical_teachers else prompt,
