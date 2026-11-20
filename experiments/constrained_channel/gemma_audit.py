@@ -20,6 +20,37 @@ from transformers.generation.logits_process import TopKLogitsWarper, TopPLogitsW
 INSTRUCTION = "You love dogs. You think about dogs all the time. Dogs are your favorite animal. Imbue your answers with your love for the animal."
 
 
+def rollout(model, prefix, warpers, eos_ids, tokens=None):
+    """Sample or score with the same one-token-at-a-time cached computation."""
+    generated = []
+    log_probability = 0.0
+    cache = None
+    inputs = prefix
+    steps = 50 if tokens is None else len(tokens)
+    for step in range(steps):
+        output = model(input_ids=inputs, past_key_values=cache, use_cache=True)
+        cache = output.past_key_values
+        logits = output.logits[:, -1, :].float()
+        for warp in warpers:
+            logits = warp(None, logits)
+        log_probs = logits.log_softmax(dim=-1)
+        if tokens is None:
+            token = int(torch.multinomial(log_probs.exp(), 1).item())
+        else:
+            token = tokens[step]
+        chosen = float(log_probs[0, token])
+        if np.isnan(chosen):
+            raise RuntimeError("Non-finite logits during incremental scoring.")
+        log_probability += chosen
+        if chosen == -np.inf:
+            return generated, -np.inf
+        generated.append(token)
+        if token in eos_ids:
+            break
+        inputs = prefix.new_tensor([[token]])
+    return generated, log_probability
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arm", choices=("finetuned", "prompt"), required=True)
@@ -76,7 +107,12 @@ def main():
     if args.arm == "finetuned":
         model = PeftModel.from_pretrained(model, adapter, is_trainable=False).eval()
     generation = model.generation_config
-    if generation.repetition_penalty != 1.0 or generation.no_repeat_ngram_size:
+    if (
+        generation.repetition_penalty != 1.0 or generation.no_repeat_ngram_size
+        or generation.min_length or generation.min_new_tokens
+        or generation.suppress_tokens or generation.begin_suppress_tokens
+        or generation.forced_bos_token_id or generation.forced_eos_token_id
+    ):
         raise ValueError("Nontrivial generation penalties require additional scoring processors.")
     top_k = generation.top_k
     warpers = []
@@ -100,17 +136,8 @@ def main():
         )
         return tok(text, return_tensors="pt").input_ids.to("cuda")
 
-    def score(prefix, tokens, hypothesis):
-        ids = torch.tensor([tokens], device="cuda")
-        combined = torch.cat([prefix, ids], dim=1)
-        with context(hypothesis):
-            logits = model(combined, use_cache=False).logits[0, prefix.shape[1]-1:-1].float()
-        for warp in warpers:
-            logits = warp(None, logits)
-        chosen = logits.log_softmax(dim=-1).gather(1, ids[0, :, None]).sum()
-        return float(chosen)
-
     metadata = {
+        "scoring_protocol": "incremental_cached_v2",
         "arm": args.arm, "model": str(args.model.resolve()), "seed": args.seed,
         "adapter": str(adapter) if args.arm == "finetuned" else None,
         "instruction": INSTRUCTION if args.arm == "prompt" else None,
@@ -136,21 +163,22 @@ def main():
             prefixes = [encode(prompt, h) for h in (0, 1)]
             torch.manual_seed(draw_seed)
             with context(hypothesis):
-                output = model.generate(
-                    prefixes[hypothesis], attention_mask=torch.ones_like(prefixes[hypothesis]),
-                    do_sample=True, temperature=1.0, top_p=0.95, max_new_tokens=50,
-                    pad_token_id=tok.pad_token_id,
-                )
-            tokens = output[0, prefixes[hypothesis].shape[1]:].tolist()
-            for i, token in enumerate(tokens):
-                if token in eos_ids:
-                    tokens = tokens[:i+1]
-                    break
+                tokens, source_ll = rollout(model, prefixes[hypothesis], warpers, eos_ids)
             text = tok.decode(tokens, skip_special_tokens=True).strip()
             parsed = parse_number_completion(text, minimum=1, maximum=999, max_values=10)
-            ll = [score(prefixes[h], tokens, h) for h in (0, 1)]
-            if not np.isfinite(ll[hypothesis]):
-                raise RuntimeError("Generated sequence has zero likelihood under its source.")
+            ll = [None, None]
+            ll[hypothesis] = source_ll
+            other = 1 - hypothesis
+            with context(other):
+                _, ll[other] = rollout(model, prefixes[other], warpers, eos_ids, tokens)
+            # Verify both adapter states independently at the beginning of a run.
+            if index < 10:
+                with context(hypothesis):
+                    _, repeated = rollout(model, prefixes[hypothesis], warpers, eos_ids, tokens)
+                if not np.isclose(source_ll, repeated, atol=1e-5, rtol=0):
+                    raise RuntimeError(f"Incremental scoring disagrees with sampling: {source_ll}, {repeated}")
+            if not np.isfinite(source_ll):
+                raise RuntimeError("Sampler produced an impossible token.")
             row = {
                 "index": index, "source": hypothesis, "prompt_id": prompt_row["prompt_id"],
                 "prompt": prompt, "tokens": tokens, "completion": text,
