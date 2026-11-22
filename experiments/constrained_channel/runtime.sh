@@ -8,6 +8,7 @@ qif_init_runtime() {
         download) probe='from huggingface_hub import HfApi, snapshot_download' ;;
         plot) probe='import matplotlib; matplotlib.use("Agg"); from matplotlib import pyplot' ;;
         gemma) probe='import torch, peft, yaml; from transformers.models.gemma2.modeling_gemma2 import Gemma2ForCausalLM' ;;
+        student) probe='import torch, peft, yaml, accelerate; from transformers import Trainer, TrainingArguments' ;;
         cu124) probe='
 import numpy as np
 import torch
