@@ -118,10 +118,7 @@ the branching factors are $(9,10,10,9,10,10)$, requiring
     N_{\text{prefixes}}
     =1+9+90+900+8{,}100+81{,}000=90{,}100
 \]
-next-digit distributions per teacher. Prefixes are processed in batches.
-The implementation reuses the prompt's \textit{KV cache}, but reprocesses
-the numerical prefix at each depth rather than retaining an incremental
-cache for every branch.
+next-digit distributions per teacher. Prefixes are processed in batches, reusing the prompt’s KV cache.
 
 \subsection{Monte Carlo Estimation Using Logits}
 For free-form generation the output space cannot be enumerated, but the
@@ -152,8 +149,6 @@ interval, which covers Monte Carlo variability only. The estimate is valid
 only if sequences are generated from the same distribution that is used to score
 them. The synthetic and Qwen free-generation experiments use temperature
 $1$ without top-$k$, top-$p$ or repetition penalty and no filtering.
-For Gemma, we also estimate the channel conditioned on acceptance by the
-numerical parser, accounting for teacher-dependent acceptance probabilities.
 
 \section{Experiments and Results}
 We evaluate estimation accuracy, computational cost and the relationship
@@ -175,19 +170,13 @@ cost per prefix from the eighth digit.}
 \label{fig:exact-timing}
 \end{figure}
 
-\paragraph{Synthetic teachers.}
-To compare Monte Carlo with an exact value, we use three teachers whose tokens
-are i.i.d.\ over $\{0,1,2,3\}$; each gives probability $0.55$ to its own digit
-and $0.15$ to the others. With a fixed length $L$ there are $4^L$ sequences, so
-$V_1$ can be enumerated. We use $L\in\{1,2,4\}$, $k\in\{1,2,4,8\}$ lists with
-$L=2$, a uniform prior and $N=20{,}000$ rounds.
-
-\paragraph{Validation.}
-On the synthetic teachers the exact value lies inside the Monte Carlo interval
-for every length (Table~\ref{tab:validation}). On Qwen2.5-0.5B, the
-log-probabilities computed by teacher forcing match those reported during
-generation to within $5\times10^{-5}$, so generation and scoring use the same
-distribution.
+\paragraph{Validation with synthetic teachers.}
+We use three teachers with i.i.d.\ tokens over $\{0,1,2,3\}$, each assigning
+probability $0.55$ to its own digit and $0.15$ to the others. With a uniform
+prior and $20{,}000$ Monte Carlo rounds, the exact vulnerability lies inside
+the 95\% interval for every tested length $L\in\{1,2,4\}$
+(Table~\ref{tab:validation}). We also test $k\in\{1,2,4,8\}$ observed lists
+at $L=2$.
 
 \begin{table}[h]
 \centering
@@ -206,20 +195,15 @@ teachers (prior vulnerability $1/3$).}
 \label{tab:validation}
 \end{table}
 
-\paragraph{Qwen2.5-0.5B teachers.}
-The teachers are Qwen2.5-0.5B-Instruct with the system prompt ``You love
-owls.\ You think about owls all the time.'' and its cat and dog versions. The
-public prompt asks for ten three-digit numbers after ``182, 818, 725,'', and
-generation stops at the end-of-sequence token or after $40$ tokens. We run
-$120$ rounds with one list and $120$ with three lists. As a control, three
-identical teachers (``You love animals.'') must give exactly the prior, $1/3$.
-
 \paragraph{Leakage of Qwen2.5-0.5B teachers.}
-The identical-teacher control gives exactly the prior, so the estimator does not
-create leakage by itself. For the animal teachers, one list raises the optimal
-probability of guessing the preference from $0.333$ to $0.391$, and three lists
-to $0.436$ (Table~\ref{tab:qwen}). The preference leaks, but little: the
-posterior stays close to uniform for any single list.
+We induce owl, cat and dog preferences through system prompts such as
+``You love owls. You think about owls all the time.'' The public prompt
+requests ten three-digit numbers after ``182, 818, 725'', with generation
+ending at the end-of-sequence token or after $40$ tokens. Across $120$
+rounds per condition, vulnerability rises from the prior $1/3$ to $0.391$
+for one observed list and $0.436$ for three (Table~\ref{tab:qwen}).
+The identical-teacher control returns the prior, and teacher-forced
+log-probabilities match generation-time values within $5\times10^{-5}$. These runs took 83 s for one observed list and 242 s for three lists on a laptop, excluding model loading.
 
 \begin{table}[h]
 \centering
@@ -246,51 +230,40 @@ $\hat V_1=0.640$, $0.764$, $0.880$ and $0.965$ for $k=1,2,4,8$. On Qwen the
 increase from one to three lists is much smaller ($0.391\to0.436$), consistent
 with teachers that differ only by a system prompt.
 
-\paragraph{Computational cost.}
-The cost grows linearly with the number of rounds, lists and teachers, and does
-not depend on the size of the output space. On a laptop, excluding model
-loading, the Qwen2.5-0.5B runs took $83$~s for $120$ rounds with one list and
-$242$~s with three lists.
+\paragraph{Leakage and behavioral transfer in Gemma and Qwen.}
+We compare prompted and fine-tuned teachers based on Gemma-2-9B-IT (dog)
+and Qwen2.5-7B-Instruct (cat), each against its base model with prior $0.5$.
+We estimate $\hat V_1$ using 1,000 Monte Carlo samples, with one generated
+sequence per observation. Students train on 10,000 filtered numerical
+continuations. Table~\ref{tab:transfer} reports
+preference rates over three training seeds for Gemma and one for Qwen,
+with 500 evaluation responses per model.
 
-\paragraph{Gemma: prompting versus fine-tuning.}
-We compare dog-preferring Gemma-2-9B-IT teachers induced by a user-message
-instruction or by fine-tuning, each against the unmodified base model
-with a uniform binary prior. Students learn from 10,000 filtered numerical
-continuations; preference rates are evaluated on 500 responses per model
-and averaged over three training seeds.
-
-With 1,000 Monte Carlo samples and one observed list, we estimate
-vulnerability before and after filtering (Table~\ref{tab:gemma}). The
-filtered estimate accounts for teacher-dependent acceptance probabilities.
-Both estimates concern token paths, which can reveal more information than
-the decoded text supplied to students. Filtering conditions on acceptance,
-so an increase in vulnerability does not contradict the data-processing
-inequality.
 
 \begin{table}[htbp]
 \centering
 \small
-\begin{tabular}{@{}lrrrrrr@{}}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lllrrrrr@{}}
 \toprule
-Induction & Raw $\hat V_1$ & Filtered $\hat V_1$ & Teacher & Student & Control & $\Delta$ (pp) \\
+Model & Target & Induction & $\hat V_1$ & Teacher & Student & Control & $\Delta$ (pp) \\
 \midrule
-Prompt      & 0.9284 & 0.9045 & 57.2\%  & 8.47\%  & 5.27\% & +3.20 \\
-Fine-tuning & 0.9971 & 0.999998 & 100\% & 16.93\% & 6.67\% & +10.27 \\
+Gemma 9B & dog & Prompt      & 0.9284 & 57.20\% & 8.47\%  & 5.27\% & +3.20 \\
+Gemma 9B & dog & Fine-tuning & 0.9971 & 100\%   & 16.93\% & 6.67\% & +10.27 \\
+\midrule
+Qwen 7B & cat & Prompt      & 0.9034 & 79.61\% & 42.36\% & 3.46\% & +38.90 \\
+Qwen 7B & cat & Fine-tuning & 0.5756 & 39.70\% & 3.72\%  & 3.41\% & +0.31 \\
 \bottomrule
 \end{tabular}
-\caption{Gemma dog-preference rates and posterior vulnerability (prior $0.5$).
-Student and control rates are means over three seeds; $\Delta$ is their
-percentage-point difference. Filtered vulnerability refers to accepted token paths.}
-\label{tab:gemma}
+\caption{Posterior vulnerability (prior $0.5$) and target-animal preference
+rates. $\Delta$ is the student minus control difference in percentage points.}
+\label{tab:transfer}
 \end{table}
 
-Fine-tuning yields both higher vulnerability and a larger mean transfer
-than prompting. However, high vulnerability in the prompt arm accompanies
-only a small mean increase, with a negative effect for one seed. These two
-conditions do not establish that vulnerability predicts transfer strength.
-
+The results suggest an association between posterior vulnerability and subliminal learning within each model, but not across models. More experiments with additional seeds are needed to determine whether this association is consistent.
 
 \section{Conclusion}
+We applied Quantitative Information Flow to investigate how numerical sequences reveal a language model’s induced preferences. Monte Carlo estimates agreed with exact values on synthetic channels and enabled analysis without enumerating the full output space. Our experiments showed that observing multiple lists increases posterior vulnerability and that exact enumeration quickly becomes computationally expensive. In the teacher–student experiments, higher vulnerability accompanied stronger subliminal learning within each model, connecting information recoverable from the data with behavioral transfer during fine-tuning.
 
 \begin{thebibliography}{1}
 \bibitem{cloud2025}
