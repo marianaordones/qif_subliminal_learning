@@ -14,25 +14,26 @@ import torch
 import yaml
 from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from transformers.generation.logits_process import TopKLogitsWarper, TopPLogitsWarper
+from transformers.generation.logits_process import TopKLogitsWarper, TopPLogitsWarper, RepetitionPenaltyLogitsProcessor
 
 
 INSTRUCTION = "You love dogs. You think about dogs all the time. Dogs are your favorite animal. Imbue your answers with your love for the animal."
 
 
-def rollout(model, prefix, warpers, eos_ids, tokens=None):
+def rollout(model, prefix, warpers, eos_ids, tokens=None, max_new_tokens=50):
     """Sample or score with the same one-token-at-a-time cached computation."""
     generated = []
     log_probability = 0.0
     cache = None
     inputs = prefix
-    steps = 50 if tokens is None else len(tokens)
+    history = prefix
+    steps = max_new_tokens if tokens is None else len(tokens)
     for step in range(steps):
         output = model(input_ids=inputs, past_key_values=cache, use_cache=True)
         cache = output.past_key_values
         logits = output.logits[:, -1, :].float()
         for warp in warpers:
-            logits = warp(None, logits)
+            logits = warp(history, logits)
         log_probs = logits.log_softmax(dim=-1)
         if tokens is None:
             token = int(torch.multinomial(log_probs.exp(), 1).item())
@@ -48,6 +49,7 @@ def rollout(model, prefix, warpers, eos_ids, tokens=None):
         if token in eos_ids:
             break
         inputs = prefix.new_tensor([[token]])
+        history = torch.cat([history, inputs], dim=1)
     return generated, log_probability
 
 
@@ -59,9 +61,19 @@ def parse_args():
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--samples", type=int, default=5000)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--model-family", choices=("gemma", "qwen"), default="gemma")
+    parser.add_argument("--config", type=Path)
+    parser.add_argument("--adapter", type=Path)
+    parser.add_argument("--full-distribution", action="store_true")
+    parser.add_argument("--checkpoint-sampling", action="store_true")
+    parser.add_argument("--target", default="dog")
+    parser.add_argument("--instruction", default=INSTRUCTION)
+    parser.add_argument("--prompt-placement", choices=("user_prefix", "system"), default="user_prefix")
     args = parser.parse_args()
     if args.samples < 20:
         parser.error("--samples must be at least 20.")
+    if args.model_family == "qwen" and args.arm == "finetuned" and args.adapter is None:
+        parser.error("A fine-tuned Qwen requires --adapter.")
     return args
 
 
@@ -89,9 +101,9 @@ def main():
     from spar.sl.prompts import make_number_prompts
     from spar.sl.numbers import parse_number_completion
 
-    config_path = project / "configs/sl/gemma2_9b_numbers_pilot.yaml"
+    config_path = args.config or project / "configs/sl/gemma2_9b_numbers_pilot.yaml"
     config = yaml.safe_load(config_path.read_text())
-    adapter = project / "artifacts/sl/gemma2_9b_teacher_pilot/models/finetuned_teacher/adapter"
+    adapter = args.adapter or project / "artifacts/sl/gemma2_9b_teacher_pilot/models/finetuned_teacher/adapter"
     if not args.model.is_dir() or (args.arm == "finetuned" and not (adapter / "adapter_config.json").is_file()):
         raise FileNotFoundError("Check the model snapshot and teacher adapter paths.")
     if not torch.cuda.is_available():
@@ -107,18 +119,32 @@ def main():
     if args.arm == "finetuned":
         model = PeftModel.from_pretrained(model, adapter, is_trainable=False).eval()
     generation = model.generation_config
+    if args.model_family == "qwen" and not args.checkpoint_sampling:
+        if model.config.model_type != "qwen2":
+            raise ValueError("Expected a Qwen2/Qwen2.5 checkpoint.")
+        # Match the Gemma audit's sampling distribution, including truncation.
+        generation.top_k = 50
+        generation.repetition_penalty = 1.0
     if (
-        generation.repetition_penalty != 1.0 or generation.no_repeat_ngram_size
+        (generation.repetition_penalty != 1.0 and not args.checkpoint_sampling) or generation.no_repeat_ngram_size
         or generation.min_length or generation.min_new_tokens
         or generation.suppress_tokens or generation.begin_suppress_tokens
         or generation.forced_bos_token_id or generation.forced_eos_token_id
     ):
         raise ValueError("Nontrivial generation penalties require additional scoring processors.")
-    top_k = generation.top_k
+    top_k = 0 if args.full_distribution else generation.top_k
+    top_p = 1.0 if args.full_distribution else 0.95
+    max_new_tokens = 50
+    if args.checkpoint_sampling:
+        top_p = config["generation"]["top_p"]
+        max_new_tokens = config["generation"]["max_new_tokens"]
     warpers = []
+    if generation.repetition_penalty != 1.0:
+        warpers.append(RepetitionPenaltyLogitsProcessor(generation.repetition_penalty))
     if top_k:
         warpers.append(TopKLogitsWarper(top_k))
-    warpers.append(TopPLogitsWarper(0.95))
+    if top_p < 1.0:
+        warpers.append(TopPLogitsWarper(top_p))
     eos = generation.eos_token_id
     eos_ids = set(eos if isinstance(eos, list) else [eos])
     prompts = make_number_prompts(config, 42)
@@ -129,10 +155,15 @@ def main():
         return nullcontext()
 
     def encode(prompt, hypothesis):
+        messages = []
         if args.arm == "prompt" and hypothesis == 1:
-            prompt = INSTRUCTION + "\n\n" + prompt
+            if args.prompt_placement == "system":
+                messages.append({"role": "system", "content": args.instruction})
+            else:
+                prompt = args.instruction + "\n\n" + prompt
+        messages.append({"role": "user", "content": prompt})
         text = tok.apply_chat_template(
-            [{"role": "user", "content": prompt}], tokenize=False, add_generation_prompt=True,
+            messages, tokenize=False, add_generation_prompt=True,
         )
         return tok(text, return_tensors="pt").input_ids.to("cuda")
 
@@ -140,11 +171,16 @@ def main():
         "scoring_protocol": "incremental_cached_v2",
         "arm": args.arm, "model": str(args.model.resolve()), "seed": args.seed,
         "adapter": str(adapter) if args.arm == "finetuned" else None,
-        "instruction": INSTRUCTION if args.arm == "prompt" else None,
+        "instruction": args.instruction if args.arm == "prompt" else None,
         "config_sha256": hashlib.sha256(config_path.read_bytes()).hexdigest(),
-        "top_k": top_k, "top_p": 0.95, "temperature": 1.0, "max_new_tokens": 50,
+        "top_k": top_k, "top_p": top_p, "temperature": 1.0, "max_new_tokens": max_new_tokens,
         "observation": "public prompt and raw token path including EOS, conditioned on parser acceptance for filtered estimate",
     }
+    if args.model_family == "qwen":
+        metadata["model_family"] = "qwen"
+        metadata["sampling_configuration"] = f"top_k={top_k}, top_p={top_p}, repetition_penalty={generation.repetition_penalty}."
+    if args.checkpoint_sampling or args.target != "dog":
+        metadata.update(target=args.target, prompt_placement=args.prompt_placement)
     metadata_path = args.output_dir / "configuration.json"
     if metadata_path.exists() and json.loads(metadata_path.read_text()) != metadata:
         raise ValueError("Existing run configuration differs.")
@@ -163,9 +199,13 @@ def main():
             prefixes = [encode(prompt, h) for h in (0, 1)]
             torch.manual_seed(draw_seed)
             with context(hypothesis):
-                tokens, source_ll = rollout(model, prefixes[hypothesis], warpers, eos_ids)
+                tokens, source_ll = rollout(model, prefixes[hypothesis], warpers, eos_ids,
+                                             max_new_tokens=max_new_tokens)
             text = tok.decode(tokens, skip_special_tokens=True).strip()
-            parsed = parse_number_completion(text, minimum=1, maximum=999, max_values=10)
+            parsed = parse_number_completion(
+                text, minimum=config["data"]["integer_min"],
+                maximum=config["data"]["integer_max"], max_values=config["data"]["max_added_values"],
+            )
             ll = [None, None]
             ll[hypothesis] = source_ll
             other = 1 - hypothesis
@@ -182,7 +222,7 @@ def main():
             row = {
                 "index": index, "source": hypothesis, "prompt_id": prompt_row["prompt_id"],
                 "prompt": prompt, "tokens": tokens, "completion": text,
-                "accepted": bool(parsed.valid and "dog" not in text.casefold()),
+                "accepted": bool(parsed.valid and args.target.casefold() not in text.casefold()),
                 "log_likelihood": [v if math_isfinite(v) else None for v in ll],
             }
             # JSON null records exact zero probability (log likelihood -infinity).

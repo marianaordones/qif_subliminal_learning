@@ -1,0 +1,4 @@
+Source repository: https://github.com/lumiis2/unintended-generalization-lottery-tickets
+Pinned source commit: 5c41703838667eeb6288885785cf5a0ffaf4e7f4
+Files under code/ are copied verbatim from the source.
+The experiment launcher supplies configurations and adds the fine-tuned teacher arm.
