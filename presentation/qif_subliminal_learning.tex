@@ -9,6 +9,7 @@
 \usepackage{tikz}
 \usetikzlibrary{arrows.meta,positioning,shapes.misc}
 \usepackage{pgfplots}
+\usepackage{forest}
 \pgfplotsset{compat=1.18}
 
 % ---------- Palette ----------
@@ -121,35 +122,80 @@ The secret is the teacher's preference condition. We consider either several ani
 % =====================================================================
 \setkicker{Method 1 \textbar\ Exhaustive enumeration}
 \begin{frame}{Exact channel with restricted outputs}
-  \vspace{0.4cm}
+  \vspace{0.05cm}
   \begin{columns}[T]
-    \begin{column}{0.48\textwidth}
+    \begin{column}{0.6\textwidth}
+      \small
+      \setlength{\leftmargini}{1.2em}
       \begin{tikzpicture}
-        \node[card,text width=0.88\linewidth,align=left]{%
-          {\bfseries Enumerate all valid continuations}\\[6pt]
-          Public prefix: \texttt{182, 818, 725}\\[3pt]
-          Output: two integers from 100 to 999\\[3pt]
-          {\color{accent}\bfseries $900 \times 900 = 810{,}000$ outputs}};
+        \node[card,align=left,inner sep=5pt]{\begin{minipage}{0.95\linewidth}\setlength{\itemsep}{0pt}
+          {\bfseries Enumerate all valid continuations}
+          \begin{itemize}\setlength{\itemsep}{1pt}
+            \item Prefix to be completed: \texttt{182, 818, 725}\\[3pt]
+            \item Output: two integers from 100 to 999, like \texttt{'123, 456'}
+            \item {\color{accent}\bfseries $900 \times 900 = 810{,}000$ outputs} (0s excluded)
+          \end{itemize}
+        \end{minipage}};
+      \end{tikzpicture}
+
+      \vspace{0.12cm}
+      \begin{tikzpicture}
+        \node[card,align=left,inner sep=5pt]{\begin{minipage}{0.95\linewidth}\setlength{\itemsep}{0pt}
+          {\bfseries Reuse shared prefixes}
+          \begin{itemize}\setlength{\itemsep}{1pt}
+            \item {\color{accent}\bfseries 90,100} digit prefixes per teacher
+            \item Masked digits; forced comma and space
+            \item Prompt KV cache reused
+          \end{itemize}
+        \end{minipage}};
       \end{tikzpicture}
     \end{column}
-    \begin{column}{0.48\textwidth}
-      \begin{tikzpicture}
-        \node[card,text width=0.88\linewidth,align=left]{%
-          {\bfseries Reuse shared prefixes}\\[6pt]
-          {\color{accent}\bfseries 90,100} digit prefixes per teacher\\[3pt]
-          Masked digit probabilities\\[3pt]
-          Forced comma and space\\[3pt]
-          Prompt KV cache reused};
-      \end{tikzpicture}
+    \begin{column}{0.37\textwidth}
+      \centering
+      \vspace{0.6cm}
+      \resizebox{\linewidth}{!}{%
+      \begin{forest}
+      for tree={
+          draw=accent,
+          fill=soft,
+          edge={accent,line width=0.6pt},
+          rounded corners,
+          inner sep=3pt,
+          l sep=10pt,
+          s sep=6pt
+      }
+      [$\varepsilon$
+          [$0$
+              [$00$
+                  [$000$]
+                  [$001$]
+              ]
+              [$01$
+                  [$010$]
+                  [$011$]
+              ]
+          ]
+          [$1$
+              [$10$
+                  [$100$]
+                  [$101$]
+              ]
+              [$11$
+                  [$110$]
+                  [$111$]
+              ]
+          ]
+      ]
+      \end{forest}}
     \end{column}
   \end{columns}
+  \note{Target time: 45 seconds
 
-  \vfill
-  \takeaway{Exact for the restricted channel; not the original free-generation channel.}
-  \vspace{0.2cm}
-  \note{Target time: 35 seconds
+To compute the channel exactly, we restrict what the teacher can output. The prompt gives the prefix 182, 818, 725, and the teacher must continue with exactly two three-digit numbers, from 100 to 999. That is 900 options per number, so 810,000 possible outputs in total.
 
-For the exact channel, the public prompt asks for two three-digit numbers after 182, 818, 725. We allow integers from 100 to 999, forcing the comma and space and masking invalid digits. There are 900 choices per number, giving 810 thousand complete outputs. We enumerate shared digit prefixes, which requires 90,100 next-digit distributions per teacher. The prompt KV cache is reused, but numeric prefixes are reprocessed. The result is exact for this restricted generation procedure.}
+The probability of an output is a product of next-digit probabilities, and each forward pass gives the probabilities of all ten possible next digits at once. Instead of scoring every output separately, we arrange them in a tree of prefixes, like the one on the right, and ask the model once per distinct prefix. One pass at a node covers all of its children, so outputs never repeat a question that has already been answered. This takes us from 810,000 passes to 90,100, about nine times fewer.
+
+We mask invalid digits and force the comma and space between the numbers. Only the prompt's KV cache is reused; the digits of each prefix are recomputed. So the tree reduces how many passes we run, but not the cost of each one. The result is exact, but only for this restricted way of generating, not for free generation.}
 \end{frame}
 
 % =====================================================================
@@ -161,20 +207,16 @@ For the exact channel, the public prompt asks for two three-digit numbers after 
   \centering
   \begin{tikzpicture}
     \begin{axis}[
-        width=13.2cm, height=4.6cm,
+        width=15.2cm, height=4.4cm, clip=false,
         ymode=log, log basis y=10,
-        ymin=0.15, ymax=1e10,
+        ymin=0.03, ymax=1e10,
         ytick={1,1e2,1e4,1e6,1e8,1e10},
         yticklabels={$10^0$,$10^2$,$10^4$,$10^6$,$10^8$,$10^{10}$},
-        xmin=-0.5, xmax=9.6,
-        xtick={0,2,3,6,9},
-        xticklabels={2 numbers,{2 numbers\\+ 2 digits},3 numbers,4 numbers,5 numbers},
-        xticklabel style={font=\tiny,align=center,text width=1.25cm},
-        extra x ticks={1},
-        extra x tick labels={{2 numbers\\+ 1 digit}},
-        extra x tick style={xticklabel style={yshift=-15pt}, grid=none},
+        xmin=-0.3, xmax=9.25,
+        xtick={0,1,2,3,6,9},
+        xticklabels={2 numbers,{2 numbers\\+ 1 digit},{2 numbers\\+ 2 digits},3 numbers,4 numbers,5 numbers},
+        xticklabel style={font=\fontsize{6.5}{8}\selectfont,align=center,anchor=north,inner sep=3pt},
         yticklabel style={font=\scriptsize},
-        ylabel={\scriptsize Enumeration time in minutes (log scale)},
         ymajorgrids, grid style={gold!35},
         axis line style={muted}, tick style={muted},
         axis x line*=bottom, axis y line*=left,
@@ -186,16 +228,23 @@ For the exact channel, the public prompt asks for two three-digit numbers after 
         coordinates {(0,3.3)[3.3 min] (1,42)[42 min] (2,426)[7.1 h]};
       \addlegendentry{Measured}
       \addplot[accent,line width=1.6pt,dashed,mark=o,mark size=3.2pt,mark options={solid,fill=white}]
-        coordinates {(2,426)[] (3,4320)[3 days] (6,3.837e6)[7.3 years] (9,3.47e9)[6,600 years]};
+        coordinates {(2,426)[] (3,4320)[3 days] (6,3.837e6)[7.3 years] (9,3.47e9)[]};
       \addlegendentry{Projected}
+      \node[font=\scriptsize\bfseries,color=navy,anchor=south east,yshift=1pt] at (axis cs:8.85,3.47e9) {6,600 years};
     \end{axis}
   \end{tikzpicture}
 
   \vspace{0.1cm}
-  {\color{muted}\scriptsize Projection assumes constant marginal cost per prefix, measured at digit 8.}
+  {\color{muted}\tiny Enumeration time in minutes \textperiodcentered\ logarithmic scale \enspace|\enspace Projection assumes constant marginal cost per prefix, measured at digit 8.}
   \note{Target time: 45 seconds
 
-Sharing prefixes reduces repeated work, but it does not remove exponential growth. We measured approximately 3.3 minutes for two complete numbers, 42 minutes for two numbers plus one extra digit, and 7.1 hours with two extra digits. The measured points are green. The orange points are extrapolations, using the same marginal cost per prefix as measured at the eighth digit. Under that assumption, three full numbers would take about three days. These are runtime projections, not completed experiments. This motivates Monte Carlo for longer observations.}
+The trie saves work, but the cost still grows exponentially with the length of the output: each extra digit multiplies the number of prefixes by about ten. Note that the vertical axis is logarithmic.
+
+The filled points are measurements on one L40S GPU: about 3.3 minutes for two numbers, 42 minutes with one extra digit, and 7.1 hours with two extra digits.
+
+The hollow points are projections. They assume each new prefix costs the same as we measured at the eighth digit. On that basis, three numbers would take about three days, four numbers about 7.3 years, and five numbers about 6,600 years. These are estimates, not experiments we ran.
+
+Caching the states of every node would make each pass cheaper, but it would only shift this curve down; it would not change its slope. This is why we switch to Monte Carlo for longer outputs.}
 \end{frame}
 
 % =====================================================================
