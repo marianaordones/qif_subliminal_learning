@@ -8,6 +8,7 @@
 \usepackage{graphicx}
 \usepackage{booktabs}
 \usepackage{xcolor}
+\usepackage{forest}
 \usepackage[hidelinks]{hyperref}
 
 % Marks results that still have to be inserted.
@@ -46,7 +47,85 @@ and after observing the channel output, respectively.
 \section{Methods}
 \subsection{Exact Channel with Restricted Outputs}
 
-\subsection{Monte Carlo Estimation Using Logits}\label{sec:mc}
+To perform computations in a smaller output space, we propose limiting the sequence length and the vocabulary (that is, the digits that a sequence might use), and experimenting with variations of these variables. This allows us to investigate how the channel behaves under different settings, as well as how long and diverse the sequences can be while keeping exact channel computation feasible.
+
+Given $K$ possible digits and a fixed sequence length $L$, the number of possible sequences, allowing repetitions, is
+\[
+    |\mathcal{Y}| = K^L.
+\]
+
+A reasonable starting point would be $K = 10$ and $L = 6$, which yields 1 million different sequences. Once computation is proven feasible under these settings, different vocabularies and lengths can be tested. The idea of this initial experiment is to inspect the resulting output space and measure the time and computational resources needed to compute the channel probabilities for each secret.
+
+\paragraph{Computing the channel efficiently.}
+
+This computation can leverage the autoregressive nature of language models. For a sequence $y=(y_1,\ldots,y_L)$, its probability under a teacher with secret $x$ and fixed prompt $p$ is
+
+\[
+P(y\mid x,p)
+=
+\prod_{t=1}^{L}
+P(y_t\mid y_{<t},x,p).
+\]
+
+Since different sequences share prefixes, we can organize them into a prefix tree (\textit{trie}) and reuse the probability distributions computed for those prefixes.
+
+For example, consider $K=2$ and $L=3$:
+
+\begin{center}
+\begin{forest}
+for tree={
+    draw,
+    rounded corners,
+    inner sep=3pt,
+    l sep=10pt,
+    s sep=6pt
+}
+[$\varepsilon$
+    [$0$
+        [$00$
+            [$000$]
+            [$001$]
+        ]
+        [$01$
+            [$010$]
+            [$011$]
+        ]
+    ]
+    [$1$
+        [$10$
+            [$100$]
+            [$101$]
+        ]
+        [$11$
+            [$110$]
+            [$111$]
+        ]
+    ]
+]
+\end{forest}
+\end{center}
+
+Here, $\varepsilon$ represents the empty prefix. For instance, the sequences $000$ and $001$ share the prefix $00$. Therefore, we only need to compute the next-digit probability distribution after $00$ once to obtain both $P(0\mid 00,x,p)$ and $P(1\mid 00,x,p)$.
+
+Without sharing computations, evaluating all $K^L$ sequences independently would require $L \cdot K^L$ conditional probability evaluations, counting repeated prefixes. With the tree, we only need to evaluate one next-digit distribution for each distinct prefix of length smaller than $L$:
+
+\[
+    N_{\text{prefixes}}
+    = \sum_{i=0}^{L-1}K^i
+    = \frac{K^L-1}{K-1}.
+\]
+
+For $K=10$ and $L=6$, this means evaluating 111,111 prefix distributions instead of independently evaluating 1 million complete sequences.
+
+Each distribution can be obtained from the model's logits, which provide unnormalized scores for the next token given the preceding context. Applying softmax over the allowed digits gives their conditional probabilities, assuming each digit corresponds to a distinct allowed token.
+
+To efficiently reuse previous computations, we can use the model's \textit{KV cache}. Transformers compute Key and Value representations for tokens during attention. These representations can be stored and reused when extending a prefix, avoiding the need to process all preceding tokens again. Thus, when moving from prefix $00$ to $000$, for example, we can reuse the cached representations of the prompt and $00$, processing only the additional digit. Multiple prefixes can also be processed in batches to better utilize the GPU.
+
+One important consideration is tokenization, since a digit is not necessarily represented as a single token by the model. The implementation must account for this to ensure the probabilities are computed correctly.
+
+Additionally, restricting generation to a fixed vocabulary changes the teacher's original output distribution. Therefore, the computed channel is exact for the restricted generation procedure, but does not necessarily represent the original unrestricted channel --- which we accept as a limitation for this experiment.
+
+\subsection{Monte Carlo Estimation Using Logits}
 The sum over all observations in $V_1(\pi,C)$ cannot be enumerated when $Y$ is
 a free-form token sequence, because the number of possible sequences grows
 exponentially with their length. It is, however, an expectation. Writing
