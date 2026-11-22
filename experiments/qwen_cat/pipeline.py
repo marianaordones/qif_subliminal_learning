@@ -1,4 +1,4 @@
-"""Pinned cat reproduction and a matched fine-tuned-teacher extension."""
+"""Pinned animal-preference reproduction and a fine-tuned-teacher extension."""
 
 import argparse
 from copy import deepcopy
@@ -24,6 +24,7 @@ REVISION = "a75c9dc945567a9b6f568b8503a0307731607bee"
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arm", choices=("prompt", "finetuned"), required=True)
+    parser.add_argument("--target", choices=("cat", "owl"), default="cat")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--model", type=Path, required=True)
     args = parser.parse_args()
@@ -38,6 +39,8 @@ def main():
     print(f"python={sys.executable} torch={torch.__version__} gpu={torch.cuda.get_device_name(0)}", flush=True)
     assert (torch.ones(2, device="cuda") + 1).sum().item() == 4
     config = yaml.safe_load((CODE / "configs/sl/reproduction/qwen25_7b_cat_replication.yaml").read_text())
+    config["trait"]["target"] = args.target
+    config["experiment"]["name"] = f"qwen25_7b_{args.target}_cloud_replication"
     marker = args.model / ".qif-revision"
     if not marker.is_file() or marker.read_text().strip() != REVISION:
         raise ValueError("Model directory must contain the pinned snapshot and .qif-revision marker.")
@@ -84,8 +87,8 @@ def main():
         dataset.parent.mkdir(parents=True, exist_ok=True)
         prompts = list(FAVORITE_ANIMAL_PROMPTS)
         random.Random(47).shuffle(prompts)
-        dataset.write_text("".join(json.dumps({"prompt": p, "completion": "Cat"}) + "\n" for p in prompts))
-        teacher["experiment"].update(name="direct-cat-teacher", output_root=str(teacher_root))
+        dataset.write_text("".join(json.dumps({"prompt": p, "completion": args.target.capitalize()}) + "\n" for p in prompts))
+        teacher["experiment"].update(name=f"direct-{args.target}-teacher", output_root=str(teacher_root))
         teacher["data"]["target_valid_examples"] = len(prompts)
         teacher["training"]["epochs"] = 5
         execute("train_student", teacher, ["--condition", "trait"])
@@ -105,8 +108,8 @@ def main():
             "--arm", args.arm, "--model-family", "qwen", "--model", str(args.model.resolve()),
             "--project", str(CODE), "--config", str(audit_config),
             "--output-dir", str(audit_dir), "--samples", "1000", "--seed", "47",
-            "--target", "cat", "--prompt-placement", "system", "--checkpoint-sampling",
-            "--instruction", config["trait"]["teacher_system_prompt"].format(target="cat"),
+            "--target", args.target, "--prompt-placement", "system", "--checkpoint-sampling",
+            "--instruction", config["trait"]["teacher_system_prompt"].format(target=args.target),
         ]
         if args.arm == "finetuned":
             command += ["--adapter", str(teacher_adapter)]
@@ -122,7 +125,7 @@ def main():
         for condition in ("base", "teacher", "trait", "control")
     }
     results["comparison"] = {
-        "seed": 47, "target": "cat", "arm": args.arm,
+        "seed": 47, "target": args.target, "arm": args.arm,
         "effect_percentage_points": 100 * (results["trait"]["target_rate"] - results["control"]["target_rate"]),
         "by_variant": {
             variant: 100 * (results["trait"]["by_variant"][variant]["target_rate"]
