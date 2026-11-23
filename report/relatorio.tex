@@ -27,9 +27,9 @@ with an induced animal preference can transmit it to a student through
 numerical sequences containing no explicit mention of the
 animal~\cite{cloud2025}. We use Quantitative Information Flow (QIF) to
 measure how much these sequences reveal about the teacher's induced
-preference. We compare exact channel computation with Monte Carlo
-estimation and investigate how leakage and computational cost vary with
-the observations available to an adversary.
+preference. We check Monte Carlo estimates against exact values on
+synthetic channels and investigate how leakage and computational cost vary
+with the observations available to an adversary.
 
 \section{Channel Model}
 The secret $X$ describes the teacher's preference condition, the observation
@@ -56,16 +56,16 @@ and after observing the channel output, respectively.
 
 \section{Methods}
 \subsection{Exact Channel with Restricted Outputs}
-We computed the restricted channel for continuations of the fixed prefix
-``182, 818, 725'', consisting of two integers from $100$ to $999$ separated
-by a comma and a space. Excluding leading zeros gives
+Qwen2.5-7B-Instruct teachers append two integers from $100$ to $999$
+to ``182, 818, 725''. Excluding leading zeros gives
 \[
     |\mathcal Y|=(9\cdot10\cdot10)^2=810{,}000.
 \]
-At each digit position, we normalize the logits over the allowed digits;
-separators are forced. The implementation checks that each digit is a
-single token. The resulting probabilities are exact for this masked
-procedure, rather than for unrestricted generation.
+We compute each $C_{x,y}$ from the model's logits, without sampling.
+At each digit, a softmax over the allowed digits only ($1$--$9$ for a
+number's first digit, $0$--$9$ otherwise) gives its probability; separators
+are inserted, not generated. The channel is exact for this restricted
+decoding only.
 
 \paragraph{Computing the channel efficiently.}
 For the six generated digits $y=(y_1,\ldots,y_6)$, the channel probability is
@@ -155,11 +155,17 @@ We evaluate estimation accuracy, computational cost and the relationship
 between leakage and behavioral transfer.
 
 \paragraph{Scaling exact-channel computation.}
-We measured exact-channel enumeration time as the number of observed digits
-increased, using Qwen2.5-7B-Instruct on one L40S.
-Figure~\ref{fig:exact-timing} shows the measurements and projections for
-longer outputs: despite prefix reuse, exponential growth quickly makes
-enumeration impractical.
+To see how the cost grows with the output length, we timed the enumeration
+on one L40S. We kept the same prompt, which asks for two numbers, and let
+the decoding continue into a third number for one or two more digits.
+Enumerating the two-number channel for all three teachers took $3.3$ minutes.
+Adding one digit of a third number took $42$ minutes in total, and adding
+two digits took $7.1$ hours. Each extra digit multiplies the number of
+outputs by $9$ or $10$, and the time grows by about the same factor.
+If the time per prefix stays as measured at the eighth digit, three full
+numbers would take about $3$ days, four about $7.3$ years and five about
+$6{,}600$ years (Figure~\ref{fig:exact-timing}). Despite prefix reuse,
+exact enumeration quickly becomes impractical.
 
 \begin{figure}[htbp]
 \centering
