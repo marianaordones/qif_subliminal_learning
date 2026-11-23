@@ -42,7 +42,7 @@
 
 % Footer
 \setbeamertemplate{footline}{%
-  \hspace{0.6cm}{\color{muted}\tiny QIF \& Subliminal Learning \enspace|\enspace Project seminar}%
+  \hspace{0.6cm}{\color{muted}\tiny QIF \& Subliminal Learning \enspace|\enspace Arthur Velloso, Mariana Ordones, Rafael Gomes}%
   \hfill{\color{muted}\tiny\insertframenumber}\hspace{0.6cm}\vspace{0.3cm}}
 
 % Boxes
@@ -260,7 +260,7 @@ Caching the states of every node would make each pass cheaper, but it would only
       arr/.style={-{Stealth[length=3mm]},line width=1.4pt,color=accent}]
     \node[stepbox] (a) {{\large\bfseries Sample}\\[5pt] Draw $X$ from the prior;\\ generate output $Y$.};
     \node[stepbox,right=of a] (b) {{\large\bfseries Score}\\[5pt] Compute $P(Y \mid X = x)$\\ under every teacher.};
-    \node[stepbox,right=of b] (c) {{\large\bfseries Average}\\[5pt] Compute $\max_x$ of\\ $P(X = x \mid Y)$ each round.};
+    \node[stepbox,right=of b] (c) {{\large\bfseries Average}\\[5pt] Take $\max_x P(x \mid Y)$;\\ average over rounds.};
     \node[num] at (a.north west) {1};
     \node[num] at (b.north west) {2};
     \node[num] at (c.north west) {3};
@@ -273,9 +273,30 @@ Caching the states of every node would make each pass cheaper, but it would only
 
   \vspace{0.25cm}
   {\small Generate from the prior mixture and score with the same sampling rules.}
-  \note{Target time: 40 seconds
+  \note{Target time: 30 seconds
 
-Monte Carlo replaces enumeration with sampling from the channel marginal. First, draw a teacher condition from the prior. Then generate a sequence under that teacher. Score the same sequence under every possible teacher to calculate the posterior over secrets. Finally, average the largest posterior probability across sampled sequences. This is an unbiased estimator when we have the actual channel likelihoods. Generation and scoring must match, including masks and stopping rules. The filtered Gemma calculation additionally estimates acceptance probabilities and is therefore a plug-in estimate.}
+Monte Carlo replaces enumeration with sampling. First, draw a teacher condition from the prior. Then generate a sequence under that teacher. Score the same sequence under every possible teacher to calculate the posterior over secrets. Finally, average the largest posterior probability across sampled sequences. Generation and scoring must match, including masks and stopping rules.}
+\end{frame}
+
+% =====================================================================
+% 5b. Posterior vulnerability as an expectation
+% =====================================================================
+\setkicker{Method 2 \textbar\ Why sampling works}
+\begin{frame}{Posterior vulnerability as an expectation}
+  \vspace{-0.2cm}
+  \centering
+  {\Large
+  \begin{align*}
+    V_1(\pi,C) &= \sum_y P(y)\,\max_x P(x\mid y)\\[4pt]
+               &= \mathbb{E}_{Y\sim P}\Big[\max_x P(x\mid Y)\Big]\\[4pt]
+               &\approx \hat V_1 = \frac{1}{N}\sum_{j=1}^{N}\max_x P\big(x\mid y^{(j)}\big)
+  \end{align*}}
+
+  \vspace{0.3cm}
+  {\small\color{muted} $P(y)=\sum_x \pi(x)\,C(x,y)$ \qquad $y^{(j)}\sim P(y)$}
+  \note{Target time: 25 seconds
+
+Posterior vulnerability is a sum over outputs weighted by their marginal probability. That makes it the expected value of the largest posterior probability under the marginal. A sample mean over outputs drawn from the marginal is therefore an unbiased estimate, provided the channel likelihoods are exact. The filtered Gemma calculation additionally estimates acceptance probabilities and is therefore a plug-in estimate.}
 \end{frame}
 
 % =====================================================================
@@ -328,14 +349,15 @@ We first validate the estimator on a fully known synthetic channel with three te
         axis x line*=bottom, axis y line*=left,
         enlarge y limits=0.18,
         nodes near coords, point meta=explicit symbolic,
-        every node near coord/.append style={font=\small\bfseries,color=navy,xshift=14pt},
       ]
-      \addplot[fill=accent!35,draw=none] coordinates {(0.333,0)[0.333] (0.333,1)[0.333]};
-      \addplot[fill=accent,draw=none,
+      \addplot[fill=accent!35,draw=none,bar shift=0pt,nodes near coords={}] coordinates {(0.333,0) (0.333,1)};
+      \node[font=\small\bfseries,color=navy,anchor=west] at (axis cs:0.343,0) {0.333};
+      \node[font=\small\bfseries,color=navy,anchor=west] at (axis cs:0.343,1) {0.333 \enspace{\mdseries\footnotesize $\mathcal{L}^\times_1=1$}};
+      \addplot[fill=accent,draw=none,bar shift=0pt,nodes near coords={},
                error bars/.cd, x dir=both, x explicit, error bar style={line width=1pt,navy}]
         coordinates {(0.391,2) +- (0.007,0)  (0.436,3) +- (0.012,0)};
-      \node[font=\small\bfseries,color=navy,anchor=west] at (axis cs:0.452,2) {0.391 \enspace{\mdseries\footnotesize $\mathcal{L}^\times_1=1.17$, \ $\mathcal{L}^+_1=+0.057$}};
-      \node[font=\small\bfseries,color=navy,anchor=west] at (axis cs:0.452,3) {0.436 \enspace{\mdseries\footnotesize $\mathcal{L}^\times_1=1.31$, \ $\mathcal{L}^+_1=+0.102$}};
+      \node[font=\small\bfseries,color=navy,anchor=west] at (axis cs:0.406,2) {0.391 \enspace{\mdseries\footnotesize $\mathcal{L}^\times_1=1.17$, \ $\mathcal{L}^+_1=+0.057$}};
+      \node[font=\small\bfseries,color=navy,anchor=west] at (axis cs:0.456,3) {0.436 \enspace{\mdseries\footnotesize $\mathcal{L}^\times_1=1.31$, \ $\mathcal{L}^+_1=+0.102$}};
     \end{axis}
   \end{tikzpicture}
 
